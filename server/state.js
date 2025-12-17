@@ -36,8 +36,11 @@ export function createInitialState() {
 
     zoneMessages: new Map(),
     zonePresence: new Map(),
+    zonePinned: new Map(),
+    zoneReactions: new Map(),
     sosAlerts: [],
     threats: [],
+    zoneMarkers: [],
 
     makeId: () => nanoid(10)
   };

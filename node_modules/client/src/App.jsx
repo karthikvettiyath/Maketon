@@ -5,9 +5,11 @@ import {
   Marker,
   Popup,
   TileLayer,
+  Circle,
   CircleMarker,
   Tooltip,
-  useMap
+  useMap,
+  useMapEvents
 } from "react-leaflet";
 import L from "leaflet";
 
@@ -114,6 +116,19 @@ function MapController({ focus }) {
       map.flyTo(focus.center, focus.zoom || 14, { duration: 1.5 });
     }
   }, [focus, map]);
+  return null;
+}
+
+function MapZoneMarkerPlacer({ enabled, onPick }) {
+  useMapEvents({
+    click(e) {
+      if (!enabled) return;
+      const lat = e?.latlng?.lat;
+      const lng = e?.latlng?.lng;
+      if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
+      onPick?.({ lat, lng });
+    }
+  });
   return null;
 }
 
@@ -523,18 +538,34 @@ export default function App() {
   const [chatKind, setChatKind] = useState("info");
   const [zonePresence, setZonePresence] = useState({ zoneId: null, users: [], count: 0 });
   const [typingNames, setTypingNames] = useState([]);
+  const [zonePinned, setZonePinned] = useState(null);
+  const [reactionCounts, setReactionCounts] = useState({});
+  const [myReactions, setMyReactions] = useState({});
   const typingTimersRef = useRef(new Map());
   const typingDebounceRef = useRef(null);
   const chatLogRef = useRef(null);
 
   const [sosInput, setSosInput] = useState("");
   const [sosAlerts, setSosAlerts] = useState([]);
+  const [sosSeverity, setSosSeverity] = useState("high");
+  const [sosCategory, setSosCategory] = useState("general");
+  const [sosAttachGps, setSosAttachGps] = useState(true);
+  const [sosOnlyOpen, setSosOnlyOpen] = useState(true);
+  const [sosCategoryFilter, setSosCategoryFilter] = useState("all");
+  const [sosSound, setSosSound] = useState(false);
+  const sosSoundRef = useRef(false);
+  const sosAudioCtxRef = useRef(null);
 
   const [threatLabel, setThreatLabel] = useState("");
   const [threatSeverity, setThreatSeverity] = useState("medium");
   const [threats, setThreats] = useState([]);
 
   const [dangerZones, setDangerZones] = useState([]);
+  const [zoneMarkers, setZoneMarkers] = useState([]);
+  const [markMode, setMarkMode] = useState(false);
+  const [markKind, setMarkKind] = useState("rally");
+  const [markRadiusM, setMarkRadiusM] = useState(250);
+  const [markLabel, setMarkLabel] = useState("");
   const [me, setMe] = useState(null);
   const [busy, setBusy] = useState(false);
   const [statusLine, setStatusLine] = useState("");
@@ -542,6 +573,9 @@ export default function App() {
   const [mapFocus, setMapFocus] = useState(null);
 
   const stealthLock = hawkinsMode === "hiding";
+
+  const [checkinNote, setCheckinNote] = useState("");
+  const [checkinAttachGps, setCheckinAttachGps] = useState(true);
 
   const mapCenter = useMemo(() => {
     const firstCamp = camps?.[0]?.location;
@@ -553,18 +587,20 @@ export default function App() {
 
     (async () => {
       try {
-        const [{ sos }, { threats: t }, { camps: campList }, { dangerZones: dz }] =
+        const [{ sos }, { threats: t }, { camps: campList }, { dangerZones: dz }, { zoneMarkers: zm }] =
           await Promise.all([
             apiGet("/api/sos"),
             apiGet("/api/threats"),
             apiGet("/api/camps"),
-            apiGet("/api/danger-zones")
+            apiGet("/api/danger-zones"),
+            apiGet("/api/zone-markers")
           ]);
         if (cancelled) return;
         setSosAlerts(sos);
         setThreats(t);
         setCamps(campList);
         setDangerZones(dz);
+        setZoneMarkers((zm || []).slice(0, 200));
       } catch (e) {
         if (!cancelled) setStatusLine(e.message || "Failed to load initial data");
       }
@@ -592,6 +628,9 @@ export default function App() {
     };
   }, [identity.userId]);
 
+  const zoneIdRef = useRef(zoneId);
+  useEffect(() => { zoneIdRef.current = zoneId; }, [zoneId]);
+
   useEffect(() => {
     const socket = io(SERVER_ORIGIN, {
       transports: ["websocket"],
@@ -599,7 +638,10 @@ export default function App() {
     });
     socketRef.current = socket;
 
-    socket.on("connect", () => setConnected(true));
+    socket.on("connect", () => {
+      setConnected(true);
+      // Re-join logic is handled by the dedicated useEffect below.
+    });
     socket.on("disconnect", () => setConnected(false));
     socket.on("hello", (payload) => {
       setZones(payload?.zones || []);
@@ -607,17 +649,34 @@ export default function App() {
     });
 
     socket.on("zone_history", ({ zoneId: z, messages }) => {
-      if (z !== zoneId) return;
+      if (z !== zoneIdRef.current) return;
       setChatMessages(messages || []);
     });
 
     socket.on("zone_presence", (snapshot) => {
-      if (snapshot?.zoneId !== zoneId) return;
+      if (snapshot?.zoneId !== zoneIdRef.current) return;
       setZonePresence(snapshot);
     });
 
+    socket.on("zone_pinned_update", ({ zoneId: z, pinned }) => {
+      if (z !== zoneIdRef.current) return;
+      setZonePinned(pinned || null);
+    });
+
+    socket.on("message_reaction_update", ({ zoneId: z, messageId, confirmCount, disputeCount }) => {
+      if (z !== zoneIdRef.current) return;
+      if (!messageId) return;
+      setReactionCounts((prev) => ({
+        ...prev,
+        [messageId]: {
+          confirm: Number.isFinite(confirmCount) ? confirmCount : (prev?.[messageId]?.confirm ?? 0),
+          dispute: Number.isFinite(disputeCount) ? disputeCount : (prev?.[messageId]?.dispute ?? 0)
+        }
+      }));
+    });
+
     socket.on("typing", ({ zoneId: z, userId, name, isTyping }) => {
-      if (z !== zoneId) return;
+      if (z !== zoneIdRef.current) return;
       if (!userId || userId === identity.userId) return;
 
       const key = String(userId);
@@ -648,7 +707,7 @@ export default function App() {
     });
 
     socket.on("chat_message", (msg) => {
-      if (msg?.zoneId !== zoneId) return;
+      if (msg?.zoneId !== zoneIdRef.current) return;
       setChatMessages((prev) => {
         const next = [...prev, msg];
         return next.slice(-120);
@@ -661,10 +720,54 @@ export default function App() {
 
     socket.on("sos_alert", (alert) => {
       setSosAlerts((prev) => [alert, ...prev].slice(0, 200));
+
+      if (sosSoundRef.current) {
+        try {
+          const AudioContextCtor = window.AudioContext || window.webkitAudioContext;
+          if (!AudioContextCtor) return;
+          if (!sosAudioCtxRef.current) sosAudioCtxRef.current = new AudioContextCtor();
+          const ctx = sosAudioCtxRef.current;
+          ctx.resume?.().catch(() => { });
+          const osc = ctx.createOscillator();
+          const gain = ctx.createGain();
+          osc.type = "square";
+          osc.frequency.value = 880;
+          gain.gain.value = 0.0001;
+          osc.connect(gain);
+          gain.connect(ctx.destination);
+          const now = ctx.currentTime;
+          gain.gain.setValueAtTime(0.0001, now);
+          gain.gain.exponentialRampToValueAtTime(0.08, now + 0.01);
+          gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.14);
+          osc.start(now);
+          osc.stop(now + 0.16);
+        } catch {
+          // ignore
+        }
+      }
+    });
+
+    socket.on("sos_update", ({ sos }) => {
+      if (!sos?.id) return;
+      setSosAlerts((prev) => {
+        const idx = prev.findIndex((x) => x?.id === sos.id);
+        if (idx === -1) return [sos, ...prev].slice(0, 200);
+        const next = [...prev];
+        next[idx] = sos;
+        return next;
+      });
     });
 
     socket.on("threat_report", (t) => {
       setThreats((prev) => [t, ...prev].slice(0, 200));
+    });
+
+    socket.on("zone_marker_add", (m) => {
+      if (!m?.id) return;
+      setZoneMarkers((prev) => {
+        if (prev.some((x) => x?.id === m.id)) return prev;
+        return [m, ...prev].slice(0, 200);
+      });
     });
 
     socket.on("danger_zones_update", ({ dangerZones: dz }) => {
@@ -680,20 +783,27 @@ export default function App() {
       socket.disconnect();
       socketRef.current = null;
     };
-  }, [identity.userId, zoneId]);
+  }, [identity.userId]);
+
+  useEffect(() => {
+    sosSoundRef.current = sosSound;
+  }, [sosSound]);
 
   useEffect(() => {
     const socket = socketRef.current;
-    if (!socket) return;
+    if (!socket || !connected) return;
     socket.emit("join_zone", { zoneId, userId: identity.userId, name: identity.name });
     return () => socket.emit("leave_zone", { zoneId });
-  }, [zoneId]);
+  }, [zoneId, identity.userId, identity.name, connected]);
 
   useEffect(() => {
     // reset per-zone UI state
     setChatMessages([]);
     setTypingNames([]);
     setZonePresence({ zoneId, users: [], count: 0 });
+    setZonePinned(null);
+    setReactionCounts({});
+    setMyReactions({});
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [zoneId]);
 
@@ -711,6 +821,102 @@ export default function App() {
   }, [chatMessages.length]);
 
   const connectionTone = connected ? "good" : "bad";
+
+  const trustByUser = useMemo(() => {
+    const trust = {};
+    for (const m of chatMessages) {
+      if (!m?.userId) continue;
+      const counts = reactionCounts?.[m.id];
+      if (!counts) continue;
+      const delta = (counts.confirm || 0) - (counts.dispute || 0);
+      if (!delta) continue;
+      trust[m.userId] = (trust[m.userId] || 0) + delta;
+    }
+    return trust;
+  }, [chatMessages, reactionCounts]);
+
+  const zoneSummary = useMemo(() => {
+    const recent = (chatMessages || []).slice(-60);
+    const counts = { info: 0, threat: 0, resource: 0, route: 0 };
+    const last = { threat: null, resource: null, route: null };
+    const seenNames = new Set();
+
+    for (const m of recent) {
+      const k = m?.kind || "info";
+      if (counts[k] !== undefined) counts[k] += 1;
+      if (m?.name) seenNames.add(m.name);
+      if ((k === "threat" || k === "resource" || k === "route") && !last[k]) last[k] = m;
+    }
+
+    return {
+      counts,
+      last,
+      activeNames: Array.from(seenNames).slice(0, 6),
+      total: recent.length
+    };
+  }, [chatMessages]);
+
+  function pinMessage(messageId) {
+    if (stealthLock) {
+      setStatusLine("STEALTH MODE: transmissions muted.");
+      return;
+    }
+    const socket = socketRef.current;
+    if (!socket?.connected) return;
+    socket.emit(
+      "pin_message",
+      { zoneId, messageId, userId: identity.userId, name: identity.name },
+      (res) => {
+        if (!res?.ok) setStatusLine(res?.error || "Failed to pin message");
+        else setZonePinned(res.pinned || null);
+      }
+    );
+  }
+
+  function unpinZone() {
+    if (stealthLock) {
+      setStatusLine("STEALTH MODE: transmissions muted.");
+      return;
+    }
+    const socket = socketRef.current;
+    if (!socket?.connected) return;
+    socket.emit("unpin_message", { zoneId }, (res) => {
+      if (!res?.ok) setStatusLine(res?.error || "Failed to unpin");
+      else setZonePinned(null);
+    });
+  }
+
+  function reactToMessage(messageId, reaction) {
+    if (stealthLock) {
+      setStatusLine("STEALTH MODE: transmissions muted.");
+      return;
+    }
+    const socket = socketRef.current;
+    if (!socket?.connected) return;
+    socket.emit(
+      "react_message",
+      { zoneId, messageId, userId: identity.userId, reaction },
+      (res) => {
+        if (!res?.ok) {
+          setStatusLine(res?.error || "Failed to react");
+          return;
+        }
+        setMyReactions((prev) => ({
+          ...prev,
+          [messageId]: res?.my?.dispute ? "dispute" : res?.my?.confirm ? "confirm" : null
+        }));
+        if (typeof res.confirmCount === "number" || typeof res.disputeCount === "number") {
+          setReactionCounts((prev) => ({
+            ...prev,
+            [messageId]: {
+              confirm: typeof res.confirmCount === "number" ? res.confirmCount : (prev?.[messageId]?.confirm ?? 0),
+              dispute: typeof res.disputeCount === "number" ? res.disputeCount : (prev?.[messageId]?.dispute ?? 0)
+            }
+          }));
+        }
+      }
+    );
+  }
 
   async function sendChat() {
     if (stealthLock) {
@@ -788,12 +994,15 @@ export default function App() {
     setBusy(true);
     setStatusLine("");
     try {
-      const location = await getCurrentLocation();
+      const location = sosAttachGps ? await getCurrentLocation() : null;
       const alert = {
         userId: identity.userId,
         name: identity.name,
         message,
-        location
+        location,
+        severity: sosSeverity,
+        category: sosCategory,
+        zoneId
       };
       socketRef.current?.emit("sos_alert", alert);
       setSosInput("");
@@ -803,6 +1012,57 @@ export default function App() {
       setBusy(false);
     }
   }
+
+  function toggleSosSound() {
+    setSosSound((prev) => {
+      const next = !prev;
+      if (next) {
+        try {
+          const AudioContextCtor = window.AudioContext || window.webkitAudioContext;
+          if (AudioContextCtor && !sosAudioCtxRef.current) sosAudioCtxRef.current = new AudioContextCtor();
+          sosAudioCtxRef.current?.resume?.().catch(() => { });
+        } catch {
+          // ignore
+        }
+      }
+      return next;
+    });
+  }
+
+  function sosHasActor(list, userId) {
+    const uid = String(userId || "").trim();
+    if (!uid) return false;
+    return Array.isArray(list) && list.some((x) => x?.userId === uid);
+  }
+
+  function sosCounts(list) {
+    return Array.isArray(list) ? list.length : 0;
+  }
+
+  function emitSosAction(event, sosId) {
+    if (stealthLock) {
+      setStatusLine("STEALTH MODE: transmissions muted.");
+      return;
+    }
+    if (!sosId) return;
+    socketRef.current?.emit(event, { sosId, userId: identity.userId, name: identity.name });
+  }
+
+  function applySosTemplate({ category, severity, text }) {
+    setSosCategory(category);
+    setSosSeverity(severity);
+    setSosInput(text);
+  }
+
+  const filteredSosAlerts = useMemo(() => {
+    const list = sosAlerts || [];
+    return list.filter((a) => {
+      const status = a?.status || (a?.resolvedAt ? "resolved" : "open");
+      if (sosOnlyOpen && status !== "open") return false;
+      if (sosCategoryFilter !== "all" && String(a?.category || "general") !== sosCategoryFilter) return false;
+      return true;
+    });
+  }, [sosAlerts, sosOnlyOpen, sosCategoryFilter]);
 
   async function reportThreat() {
     if (stealthLock) {
@@ -837,6 +1097,77 @@ export default function App() {
       setBusy(false);
     }
   }
+
+  async function addZoneMarker(location) {
+    if (stealthLock) {
+      setStatusLine("STEALTH MODE: transmissions muted.");
+      return;
+    }
+    if (!Number.isFinite(Number(location?.lat)) || !Number.isFinite(Number(location?.lng))) return;
+
+    const payload = {
+      userId: identity.userId,
+      name: identity.name,
+      kind: markKind,
+      radiusM: markRadiusM,
+      label: markLabel.trim(),
+      location
+    };
+
+    setBusy(true);
+    setStatusLine("");
+    try {
+      if (socketRef.current?.connected) {
+        socketRef.current.emit("zone_marker_add", payload, (ack) => {
+          if (ack?.ok) {
+            setStatusLine("Zone marker deployed.");
+          } else {
+            setStatusLine(ack?.error || "Failed to deploy marker");
+          }
+        });
+      } else {
+        const { zoneMarker } = await apiPost("/api/zone-markers", payload);
+        if (zoneMarker?.id) {
+          setZoneMarkers((prev) => [zoneMarker, ...prev].slice(0, 200));
+        }
+        setStatusLine("Zone marker deployed.");
+      }
+      setMarkMode(false);
+      setMarkLabel("");
+    } catch (e) {
+      setStatusLine(e.message || "Failed to deploy marker");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function markMyLocation() {
+    if (stealthLock) {
+      setStatusLine("STEALTH MODE: transmissions muted.");
+      return;
+    }
+    try {
+      const loc = await getCurrentLocation();
+      if (!loc) {
+        setStatusLine("Location unavailable (permission denied or unsupported).");
+        return;
+      }
+      await addZoneMarker(loc);
+    } catch {
+      setStatusLine("Location unavailable.");
+    }
+  }
+
+  const markerStyleByKind = useMemo(
+    () => ({
+      safe: { color: "#00f0ff", fillColor: "#00f0ff", fillOpacity: 0.12 },
+      danger: { color: "#ff1f1f", fillColor: "#ff1f1f", fillOpacity: 0.12 },
+      resource: { color: "#00f0ff", fillColor: "#00f0ff", fillOpacity: 0.08 },
+      rally: { color: "#ffb800", fillColor: "#ffb800", fillOpacity: 0.10 },
+      blocked: { color: "#8b9bb4", fillColor: "#8b9bb4", fillOpacity: 0.10 }
+    }),
+    []
+  );
 
   async function autoReportThreat({
     label,
@@ -875,20 +1206,68 @@ export default function App() {
     setBusy(true);
     setStatusLine("");
     try {
-      const location = await getCurrentLocation();
+      const location = checkinAttachGps ? await getCurrentLocation() : null;
       const { user } = await apiPost("/api/checkin", {
         userId: identity.userId,
         name: identity.name,
-        location
+        location,
+        note: checkinNote
       });
       setMe(user);
       setStatusLine("Check-in confirmed. Stay loud, stay alive.");
+      setCheckinNote("");
     } catch (e) {
       setStatusLine(e.message || "Check-in failed");
     } finally {
       setBusy(false);
     }
   }
+
+  function applyCheckInTemplate(text) {
+    setCheckinNote(text);
+  }
+
+  function nextUtcMidnightMs(from = new Date()) {
+    const d = new Date(from);
+    d.setUTCHours(24, 0, 0, 0);
+    return d.getTime();
+  }
+
+  function formatCountdown(ms) {
+    const s = Math.max(0, Math.floor(ms / 1000));
+    const h = Math.floor(s / 3600);
+    const m = Math.floor((s % 3600) / 60);
+    const ss = s % 60;
+    return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(ss).padStart(2, "0")}`;
+  }
+
+  const checkinCountdown = useMemo(() => {
+    const now = Date.now();
+    return formatCountdown(nextUtcMidnightMs(new Date(now)) - now);
+  }, [me?.lastCheckInAt]);
+
+  const checkInHistory = useMemo(() => {
+    const list = Array.isArray(me?.checkInHistory) ? me.checkInHistory : [];
+    const byDay = new Map();
+    for (const e of list) {
+      if (e?.dayKey) byDay.set(e.dayKey, e);
+    }
+
+    // Build last 7 UTC day keys
+    const days = [];
+    const base = new Date();
+    base.setUTCHours(0, 0, 0, 0);
+    for (let i = 6; i >= 0; i -= 1) {
+      const d = new Date(base);
+      d.setUTCDate(d.getUTCDate() - i);
+      const y = d.getUTCFullYear();
+      const m = String(d.getUTCMonth() + 1).padStart(2, "0");
+      const dd = String(d.getUTCDate()).padStart(2, "0");
+      const key = `${y}-${m}-${dd}`;
+      days.push({ key, entry: byDay.get(key) || null, isToday: i === 0 });
+    }
+    return { days, recent: list.slice().reverse().slice(0, 8) };
+  }, [me?.checkInHistory]);
 
   const statusBadge = me?.status === "missing" ? <Badge tone="bad">MISSING</Badge> : <Badge tone="good">SAFE</Badge>;
 
@@ -951,7 +1330,7 @@ export default function App() {
 
       <main className="main">
         {activeTab === "chat" ? (
-          <section className="panel">
+          <section className="panel tabPanel">
             <div className="panelHeader">
               <div className="panelTitle">Zone-Based Chat Rooms</div>
               <div className="panelHint">Coordinate fast. Keep messages short and actionable.</div>
@@ -976,6 +1355,26 @@ export default function App() {
 
             <div className="chatLayout">
               <div className="chatLeft">
+                {zonePinned ? (
+                  <div className="pinnedCard">
+                    <div className="pinnedTop">
+                      <div className="pinnedTitle">
+                        <Badge tone={zonePinned.kind === "threat" ? "bad" : zonePinned.kind === "resource" ? "good" : zonePinned.kind === "route" ? "warn" : "mid"}>
+                          PINNED
+                        </Badge>
+                        <span className="spacer" />
+                        <span className="pinnedMeta">By {zonePinned?.from?.name || "Unknown"}</span>
+                        <span className="spacer" />
+                        <span className="pinnedMeta">Pinned by {zonePinned?.pinnedBy?.name || "Unknown"}</span>
+                      </div>
+                      <button className="msgAction" onClick={unpinZone} disabled={stealthLock}>
+                        Unpin
+                      </button>
+                    </div>
+                    <div className="pinnedBody">{zonePinned.text}</div>
+                  </div>
+                ) : null}
+
                 <div className="log" ref={chatLogRef}>
                   {chatMessages.length === 0 ? (
                     <div className="empty">No chatter yet. Break the silence.</div>
@@ -984,6 +1383,9 @@ export default function App() {
                       const kind = m.kind || "info";
                       const tone = kind === "threat" ? "bad" : kind === "resource" ? "good" : kind === "route" ? "warn" : "mid";
                       const label = kind.toUpperCase();
+                      const counts = reactionCounts?.[m.id] || { confirm: 0, dispute: 0 };
+                      const mine = myReactions?.[m.id];
+                      const trust = m.userId ? (trustByUser?.[m.userId] || 0) : 0;
 
                       // Simple parser for "GPS: lat, lng"
                       const parts = [];
@@ -1012,8 +1414,41 @@ export default function App() {
                       return (
                         <div key={m.id} className={`logItem logItemChat logItem-${kind}`}>
                           <div className="logTop">
-                            <span className="logName">{m.name}</span>
-                            <span className="logTime">{formatTime(m.createdAt)}</span>
+                            <div className="logTopLeft">
+                              <span className="logName">{m.name}</span>
+                              {trust ? (
+                                <span className={trust > 0 ? "trust trustUp" : "trust trustDown"}>
+                                  Trust {trust > 0 ? `+${trust}` : trust}
+                                </span>
+                              ) : null}
+                            </div>
+                            <div className="logTopRight">
+                              <button
+                                className={mine === "confirm" ? "msgAction msgActionOn" : "msgAction"}
+                                onClick={() => reactToMessage(m.id, "confirm")}
+                                disabled={stealthLock || !connected}
+                                title="Confirm this report"
+                              >
+                                ✓ {counts.confirm || 0}
+                              </button>
+                              <button
+                                className={mine === "dispute" ? "msgAction msgActionOn" : "msgAction"}
+                                onClick={() => reactToMessage(m.id, "dispute")}
+                                disabled={stealthLock || !connected}
+                                title="Dispute this report"
+                              >
+                                ✕ {counts.dispute || 0}
+                              </button>
+                              <button
+                                className="msgAction"
+                                onClick={() => pinMessage(m.id)}
+                                disabled={stealthLock || !connected}
+                                title="Pin as commander broadcast"
+                              >
+                                Pin
+                              </button>
+                              <span className="logTime">{formatTime(m.createdAt)}</span>
+                            </div>
                           </div>
                           <div className="logText">
                             <Badge tone={tone}>{label}</Badge>
@@ -1075,6 +1510,21 @@ export default function App() {
                 </div>
 
                 <div className="sideCard">
+                  <div className="sideTitle">Zone Summary</div>
+                  <div className="meta">Last 60 messages: {zoneSummary.total}</div>
+                  <div className="meta">Threats: {zoneSummary.counts.threat} • Resources: {zoneSummary.counts.resource} • Routes: {zoneSummary.counts.route}</div>
+                  {zoneSummary.last.threat ? (
+                    <div className="meta"><strong>Latest threat:</strong> {zoneSummary.last.threat.text}</div>
+                  ) : null}
+                  {zoneSummary.last.resource ? (
+                    <div className="meta"><strong>Latest resource:</strong> {zoneSummary.last.resource.text}</div>
+                  ) : null}
+                  {zoneSummary.last.route ? (
+                    <div className="meta"><strong>Latest route:</strong> {zoneSummary.last.route.text}</div>
+                  ) : null}
+                </div>
+
+                <div className="sideCard">
                   <div className="sideTitle">Active Presence</div>
                   <div className="meta">Survivors in this sector: {zonePresence?.count ?? 0}</div>
                   <div className="presenceList">
@@ -1131,11 +1581,92 @@ export default function App() {
         ) : null}
 
         {activeTab === "sos" ? (
-          <section className="panel grid2">
+          <section className="panel grid2 tabPanel">
             <div>
               <div className="panelHeader">
                 <div className="panelTitle">Global SOS Alert Stream</div>
                 <div className="panelHint">SOS broadcasts to everyone. GPS is attached when available.</div>
+              </div>
+
+              <div className="row sosControls">
+                <label className="label" style={{ width: 180 }}>
+                  Category
+                  <select className="select" value={sosCategory} onChange={(e) => setSosCategory(e.target.value)} disabled={stealthLock}>
+                    <option value="general">General</option>
+                    <option value="medical">Medical</option>
+                    <option value="evac">Evac</option>
+                    <option value="supplies">Supplies</option>
+                    <option value="threat">Threat</option>
+                    <option value="lost">Lost</option>
+                  </select>
+                </label>
+                <label className="label" style={{ width: 180 }}>
+                  Severity
+                  <select className="select" value={sosSeverity} onChange={(e) => setSosSeverity(e.target.value)} disabled={stealthLock}>
+                    <option value="low">Low</option>
+                    <option value="medium">Medium</option>
+                    <option value="high">High</option>
+                    <option value="critical">Critical</option>
+                  </select>
+                </label>
+                <label className="label" style={{ minWidth: 220, flex: 1 }}>
+                  Sector (optional)
+                  <select className="select" value={zoneId} onChange={(e) => setZoneId(e.target.value)} disabled={stealthLock}>
+                    {(zones.length ? zones : [{ id: "castle-byers", name: "Castle Byers" }]).map((z) => (
+                      <option key={z.id} value={z.id}>
+                        {z.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+
+              <div className="sosMetaRow">
+                <button
+                  className={sosAttachGps ? "chip sosChipOn" : "chip"}
+                  type="button"
+                  onClick={() => setSosAttachGps((p) => !p)}
+                  disabled={stealthLock}
+                >
+                  GPS: {sosAttachGps ? "ON" : "OFF"}
+                </button>
+                <button
+                  className={sosOnlyOpen ? "chip sosChipOn" : "chip"}
+                  type="button"
+                  onClick={() => setSosOnlyOpen((p) => !p)}
+                >
+                  Show: {sosOnlyOpen ? "OPEN" : "ALL"}
+                </button>
+                <label className="label" style={{ width: 220, marginBottom: 0 }}>
+                  Filter
+                  <select className="select" value={sosCategoryFilter} onChange={(e) => setSosCategoryFilter(e.target.value)}>
+                    <option value="all">All categories</option>
+                    <option value="medical">Medical</option>
+                    <option value="evac">Evac</option>
+                    <option value="supplies">Supplies</option>
+                    <option value="threat">Threat</option>
+                    <option value="lost">Lost</option>
+                    <option value="general">General</option>
+                  </select>
+                </label>
+                <button className={sosSound ? "chip sosChipOn" : "chip"} type="button" onClick={toggleSosSound}>
+                  Sound: {sosSound ? "ON" : "OFF"}
+                </button>
+              </div>
+
+              <div className="chipRow" style={{ marginTop: 10 }}>
+                <button className="chip" disabled={stealthLock} onClick={() => applySosTemplate({ category: "medical", severity: "critical", text: "MEDICAL: severe injury. Need aid at" })}>
+                  Medical (Critical)
+                </button>
+                <button className="chip" disabled={stealthLock} onClick={() => applySosTemplate({ category: "evac", severity: "high", text: "EVAC: trapped. Need extraction at" })}>
+                  Evac Needed
+                </button>
+                <button className="chip" disabled={stealthLock} onClick={() => applySosTemplate({ category: "supplies", severity: "medium", text: "SUPPLIES: need water/food/medical at" })}>
+                  Supplies
+                </button>
+                <button className="chip" disabled={stealthLock} onClick={() => applySosTemplate({ category: "lost", severity: "high", text: "LOST: separated from group. Last seen near" })}>
+                  Lost Survivor
+                </button>
               </div>
 
               <div className="composer">
@@ -1153,21 +1684,65 @@ export default function App() {
               </div>
 
               <div className="log">
-                {sosAlerts.length === 0 ? (
+                {filteredSosAlerts.length === 0 ? (
                   <div className="empty">No SOS alerts yet.</div>
                 ) : (
-                  sosAlerts.map((a) => (
+                  filteredSosAlerts.map((a) => (
                     <div key={a.id} className="logItem logItemSos">
                       <div className="logTop">
                         <span className="logName">{a.name}</span>
-                        <span className="logTime">{formatTime(a.createdAt)}</span>
+                        <span className="sosBadges">
+                          <Badge tone={a.severity === "critical" || a.severity === "high" ? "bad" : a.severity === "medium" ? "warn" : "mid"}>
+                            {String(a.severity || "high").toUpperCase()}
+                          </Badge>
+                          <Badge tone={a.category === "medical" ? "bad" : a.category === "supplies" ? "good" : a.category === "evac" ? "warn" : "mid"}>
+                            {String(a.category || "general").toUpperCase()}
+                          </Badge>
+                          <Badge tone={(a.status || (a.resolvedAt ? "resolved" : "open")) === "resolved" ? "good" : "bad"}>
+                            {(a.status || (a.resolvedAt ? "resolved" : "open")).toUpperCase()}
+                          </Badge>
+                          <span className="logTime">{formatTime(a.createdAt)}</span>
+                        </span>
                       </div>
                       <div className="logText">{a.message}</div>
+                      {a.zoneId ? <div className="meta">Sector: {a.zoneId}</div> : null}
                       {a.location ? (
                         <div className="meta">GPS: {a.location.lat.toFixed(5)}, {a.location.lng.toFixed(5)}</div>
                       ) : (
                         <div className="meta">GPS: unavailable</div>
                       )}
+
+                      <div className="sosActionRow">
+                        <button
+                          className={sosHasActor(a.acknowledgements, identity.userId) ? "msgAction msgActionOn" : "msgAction"}
+                          onClick={() => emitSosAction("sos_ack", a.id)}
+                          disabled={stealthLock}
+                        >
+                          ✓ Acknowledge ({sosCounts(a.acknowledgements)})
+                        </button>
+                        <button
+                          className={sosHasActor(a.responders, identity.userId) ? "msgAction msgActionOn" : "msgAction"}
+                          onClick={() => emitSosAction("sos_take", a.id)}
+                          disabled={stealthLock}
+                        >
+                          → Responding ({sosCounts(a.responders)})
+                        </button>
+                        <button
+                          className={(a.status || (a.resolvedAt ? "resolved" : "open")) === "resolved" ? "msgAction" : "msgAction msgActionDanger"}
+                          onClick={() => emitSosAction("sos_resolve", a.id)}
+                          disabled={stealthLock}
+                        >
+                          {(a.status || (a.resolvedAt ? "resolved" : "open")) === "resolved" ? "Reopen" : "Resolve"}
+                        </button>
+                      </div>
+
+                      {(Array.isArray(a.responders) && a.responders.length) || (Array.isArray(a.acknowledgements) && a.acknowledgements.length) ? (
+                        <div className="meta">
+                          {Array.isArray(a.responders) && a.responders.length ? `Responders: ${a.responders.map((r) => r?.name || "Survivor").slice(0, 3).join(", ")}${a.responders.length > 3 ? "…" : ""}` : null}
+                          {Array.isArray(a.acknowledgements) && a.acknowledgements.length ? `  •  Acknowledged: ${a.acknowledgements.map((r) => r?.name || "Survivor").slice(0, 3).join(", ")}${a.acknowledgements.length > 3 ? "…" : ""}` : null}
+                          {a.resolvedAt ? `  •  Resolved: ${formatTime(a.resolvedAt)}${a.resolvedBy?.name ? ` by ${a.resolvedBy.name}` : ""}` : null}
+                        </div>
+                      ) : null}
                     </div>
                   ))
                 )}
@@ -1244,24 +1819,79 @@ export default function App() {
         ) : null}
 
         {activeTab === "map" ? (
-          <section className="panel">
+          <section className="panel tabPanel">
             <div className="panelHeader">
               <div className="panelTitle">Relief Camp Map</div>
               <div className="panelHint">Safe zones, camp status, resource availability, and danger markers.</div>
+            </div>
+
+            <div className="row" style={{ alignItems: "end" }}>
+              <label className="label" style={{ width: 180 }}>
+                Mark Type
+                <select className="select" value={markKind} onChange={(e) => setMarkKind(e.target.value)} disabled={stealthLock}>
+                  <option value="rally">Rally Point</option>
+                  <option value="safe">Safe Zone</option>
+                  <option value="resource">Resource</option>
+                  <option value="blocked">Blocked</option>
+                  <option value="danger">Danger</option>
+                </select>
+              </label>
+              <label className="label" style={{ width: 180 }}>
+                Radius (m)
+                <select className="select" value={markRadiusM} onChange={(e) => setMarkRadiusM(Number(e.target.value))} disabled={stealthLock}>
+                  <option value={60}>60</option>
+                  <option value={120}>120</option>
+                  <option value={250}>250</option>
+                  <option value={500}>500</option>
+                  <option value={1000}>1000</option>
+                </select>
+              </label>
+              <label className="label" style={{ flex: 1, minWidth: 220 }}>
+                Label
+                <input
+                  className="input"
+                  value={markLabel}
+                  onChange={(e) => setMarkLabel(e.target.value)}
+                  placeholder="e.g., 'Safe corridor', 'Supply cache', 'Gate activity'"
+                  maxLength={80}
+                  disabled={stealthLock}
+                />
+              </label>
+
+              <button
+                className={markMode ? "button buttonDanger" : "button"}
+                type="button"
+                onClick={() => setMarkMode((p) => !p)}
+                disabled={!connected || busy || stealthLock}
+                title="When enabled, click the map to place a zone marker"
+              >
+                {markMode ? "Click map to place…" : "Mark Zone"}
+              </button>
+              <button
+                className="button"
+                type="button"
+                onClick={markMyLocation}
+                disabled={!connected || busy || stealthLock}
+              >
+                Mark My Location
+              </button>
             </div>
 
             <div className="legend">
               <span className="legendItem"><span className="dot dotCamp" /> Relief Camp</span>
               <span className="legendItem"><span className="dot dotDanger" /> Danger Zone (broken streak)</span>
               <span className="legendItem"><span className="dot dotThreat" /> Threat Marker</span>
+              <span className="legendItem"><span className="dot dotZone" /> Marked Zone</span>
             </div>
 
-            <div className="mapWrap">
-              <MapContainer center={mapCenter} zoom={12} scrollWheelZoom className="map">
+            <div className={markMode ? "mapWrap mapWrapMark" : "mapWrap"}>
+              <MapContainer center={mapCenter} zoom={12} scrollWheelZoom className={markMode ? "map mapMark" : "map"}>
                 <TileLayer
                   attribution='&copy; OpenStreetMap contributors'
                   url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
                 />
+
+                <MapZoneMarkerPlacer enabled={markMode && !stealthLock} onPick={addZoneMarker} />
 
                 {camps.map((c) => (
                   <Marker key={c.id} position={[c.location.lat, c.location.lng]}>
@@ -1322,13 +1952,44 @@ export default function App() {
                       </Popup>
                     </CircleMarker>
                   ))}
+
+                {zoneMarkers
+                  .filter((m) => m?.location)
+                  .slice(0, 120)
+                  .map((m) => {
+                    const style = markerStyleByKind?.[m.kind] || markerStyleByKind.rally;
+                    return (
+                      <Circle
+                        key={m.id}
+                        center={[m.location.lat, m.location.lng]}
+                        radius={Number.isFinite(Number(m.radiusM)) ? Number(m.radiusM) : 250}
+                        pathOptions={{
+                          color: style.color,
+                          fillColor: style.fillColor,
+                          fillOpacity: style.fillOpacity,
+                          weight: 2
+                        }}
+                      >
+                        <Popup>
+                          <div className="popupTitle">Marked Zone</div>
+                          <div className="meta">Type: {String(m.kind || "rally")}</div>
+                          <div className="meta">Label: {m.label || "Marked Zone"}</div>
+                          <div className="meta">Radius: {m.radiusM || 250}m</div>
+                          <div className="meta">By: {m.name || "Survivor"}</div>
+                          <div className="meta">Time: {formatTime(m.createdAt)}</div>
+                        </Popup>
+                      </Circle>
+                    );
+                  })}
+
+                <MapController focus={mapFocus} />
               </MapContainer>
             </div>
           </section>
         ) : null}
 
         {activeTab === "checkin" ? (
-          <section className="panel">
+          <section className="panel tabPanel">
             <div className="panelHeader">
               <div className="panelTitle">Daily Streak Check-In</div>
               <div className="panelHint">
@@ -1342,6 +2003,7 @@ export default function App() {
                 <div className="cardLine">{statusBadge} • Streak: {me?.streak ?? 0}</div>
                 <div className="meta">User ID: {identity.userId}</div>
                 <div className="meta">Last check-in: {me?.lastCheckInAt ? formatTime(me.lastCheckInAt) : "never"}</div>
+                <div className="meta">Next reset (UTC): {checkinCountdown}</div>
               </div>
 
               <div className="card">
@@ -1349,7 +2011,39 @@ export default function App() {
                 <button className="button" onClick={doCheckIn} disabled={busy}>
                   I’m Safe (Check-In)
                 </button>
-                <div className="meta">If GPS is allowed, your last known location updates.</div>
+                <div className="chipRow" style={{ marginTop: 10 }}>
+                  <button
+                    className={checkinAttachGps ? "chip sosChipOn" : "chip"}
+                    type="button"
+                    onClick={() => setCheckinAttachGps((p) => !p)}
+                    disabled={busy}
+                  >
+                    GPS: {checkinAttachGps ? "ON" : "OFF"}
+                  </button>
+                  <button className="chip" type="button" onClick={() => applyCheckInTemplate("STATUS: all clear. Staying mobile.") } disabled={busy}>
+                    All Clear
+                  </button>
+                  <button className="chip" type="button" onClick={() => applyCheckInTemplate("STATUS: low supplies. Need water/food.") } disabled={busy}>
+                    Low Supplies
+                  </button>
+                  <button className="chip" type="button" onClick={() => applyCheckInTemplate("STATUS: injured but stable. Avoid travel.") } disabled={busy}>
+                    Injured
+                  </button>
+                </div>
+
+                <label className="label" style={{ marginTop: 10 }}>
+                  Daily Log (optional)
+                  <input
+                    className="input"
+                    value={checkinNote}
+                    onChange={(e) => setCheckinNote(e.target.value)}
+                    placeholder="Short note for today: status, supplies, rendezvous…"
+                    maxLength={180}
+                    disabled={busy}
+                  />
+                </label>
+
+                <div className="meta">Tip: keep it short — this is your daily breadcrumb trail.</div>
               </div>
 
               <div className="card">
@@ -1357,16 +2051,56 @@ export default function App() {
                 <div className="meta">Derived from survivors with broken streaks.</div>
                 <div className="meta">Count: {dangerZones.length}</div>
               </div>
+
+              <div className="card">
+                <div className="cardTitle">Last 7 Days</div>
+                <div className="streakGrid">
+                  {checkInHistory.days.map((d) => (
+                    <div
+                      key={d.key}
+                      className={
+                        d.entry
+                          ? (d.isToday ? "streakCell streakOk streakToday" : "streakCell streakOk")
+                          : (d.isToday ? "streakCell streakMiss streakToday" : "streakCell streakMiss")
+                      }
+                      title={d.entry?.note ? `${d.key} — ${d.entry.note}` : d.key}
+                    >
+                      <div className="streakDay">{d.key.slice(5)}</div>
+                      <div className="streakMark">{d.entry ? "✓" : "–"}</div>
+                    </div>
+                  ))}
+                </div>
+                <div className="meta">Green = checked in. Gray = no log yet.</div>
+              </div>
+
+              <div className="card">
+                <div className="cardTitle">Recent Logs</div>
+                {checkInHistory.recent.length === 0 ? (
+                  <div className="meta">No logs yet.</div>
+                ) : (
+                  <div className="presenceList">
+                    {checkInHistory.recent.map((e) => (
+                      <div key={`${e.dayKey}-${e.at}`} className="presenceItem">
+                        <span className="mono">{e.dayKey}</span>
+                        <span className="spacer" />
+                        <span style={{ color: "#ddd" }}>{e.note || "(no note)"}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
             </div>
           </section>
         ) : null}
         {activeTab === "hawkins" ? (
-          <HawkinsProtocol
-            identity={identity}
-            mode={hawkinsMode}
-            setMode={setHawkinsMode}
-            autoReportThreat={autoReportThreat}
-          />
+          <div className="tabPanel">
+            <HawkinsProtocol
+              identity={identity}
+              mode={hawkinsMode}
+              setMode={setHawkinsMode}
+              autoReportThreat={autoReportThreat}
+            />
+          </div>
         ) : null}
       </main>
 

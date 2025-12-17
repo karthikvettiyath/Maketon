@@ -51,6 +51,7 @@ export function getOrCreateUser(state, { userId, name }) {
       lastCheckInAt: null,
       lastCheckInDayKey: null,
       lastKnownLocation: null,
+      checkInHistory: [],
       status: "unknown",
       missingSince: null,
       dangerZone: null
@@ -63,7 +64,33 @@ export function getOrCreateUser(state, { userId, name }) {
   return user;
 }
 
-export function checkIn(state, { userId, name, location }, now = new Date()) {
+function normalizeCheckInNote(value) {
+  const s = String(value || "").trim();
+  if (!s) return null;
+  return s.slice(0, 180);
+}
+
+function pushCheckInHistory(user, { dayKey, at, location, note }) {
+  if (!user.checkInHistory) user.checkInHistory = [];
+  const entry = {
+    dayKey,
+    at: at.toISOString(),
+    location,
+    note
+  };
+
+  // Replace existing entry for same day (if user checks in multiple times in a day)
+  const idx = user.checkInHistory.findIndex((x) => x?.dayKey === dayKey);
+  if (idx >= 0) user.checkInHistory[idx] = entry;
+  else user.checkInHistory.push(entry);
+
+  // Keep only last 21 days for demo
+  if (user.checkInHistory.length > 21) {
+    user.checkInHistory.splice(0, user.checkInHistory.length - 21);
+  }
+}
+
+export function checkIn(state, { userId, name, location, note }, now = new Date()) {
   const user = getOrCreateUser(state, { userId, name });
 
   const todayKey = utcDayKey(now);
@@ -71,6 +98,14 @@ export function checkIn(state, { userId, name, location }, now = new Date()) {
 
   const newLocation = asLocation(location);
   if (newLocation) user.lastKnownLocation = newLocation;
+
+  const cleanNote = normalizeCheckInNote(note);
+  pushCheckInHistory(user, {
+    dayKey: todayKey,
+    at: now,
+    location: newLocation,
+    note: cleanNote
+  });
 
   if (user.lastCheckInDayKey === todayKey) {
     // no-op: already checked in today

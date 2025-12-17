@@ -1,26 +1,55 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&family=VT323&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&family=VT323&family=Merriweather:wght@700;900&display=swap');
 
 :root {
+  /* Fonts */
   --font-body: 'Inter', sans-serif;
   --font-mono: 'VT323', monospace;
+  --font-title: 'Merriweather', serif;
 
-  /* Stranger Things Palette */
-  --c-bg: #050510;
-  --c-bg-panel: rgba(10, 15, 30, 0.7);
-  --c-text: #e0e0e0;
-  --c-red: #ff3333;
-  --c-red-dim: rgba(255, 51, 51, 0.2);
-  --c-red-glow: rgba(255, 51, 51, 0.6);
-  --c-blue: #3388ff;
-  --c-blue-dim: rgba(51, 136, 255, 0.2);
-  --c-gold: #ffcc00;
-  
-  --shadow-glow: 0 0 10px rgba(255, 51, 51, 0.5);
-  --crt-scanline: linear-gradient(
-    rgba(18, 16, 16, 0) 50%,
-    rgba(0, 0, 0, 0.25) 50%
-  );
-  --crt-scanline-size: 4px;
+  /* Stranger Things Palette - Premium Edition */
+  --c-bg: #060608;
+  --c-bg-panel: rgba(18, 18, 24, 0.85);
+
+  --c-red: #ff1f1f;
+  --c-red-dim: rgba(255, 31, 31, 0.15);
+  --c-red-glow: rgba(255, 0, 0, 0.7);
+
+  --c-blue: #00f0ff;
+  /* Sci-fi cyan */
+  --c-blue-dim: rgba(0, 240, 255, 0.1);
+  --c-blue-glow: rgba(0, 240, 255, 0.6);
+
+  --c-gold: #ffb800;
+  --c-text: #e0e6ed;
+  --c-text-muted: #8b9bb4;
+
+  /* FX */
+  --shadow-card: 0 8px 32px rgba(0, 0, 0, 0.6);
+  --glow-text: 0 0 10px rgba(255, 31, 31, 0.5);
+  --glow-border: 0 0 15px rgba(255, 31, 31, 0.2);
+
+  --crt-scanline: linear-gradient(rgba(18, 16, 16, 0) 50%,
+      rgba(0, 0, 0, 0.25) 50%), linear-gradient(90deg, rgba(255, 0, 0, 0.06), rgba(0, 255, 0, 0.02), rgba(0, 0, 255, 0.06));
+
+  /* Motion */
+  --ease-standard: cubic-bezier(0.2, 0, 0, 1);
+  --ease-emphasized: cubic-bezier(0.2, 0, 0, 1);
+  --dur-fast: 140ms;
+  --dur-med: 220ms;
+  --dur-slow: 360ms;
+
+  /* Focus */
+  --focus-ring: 0 0 0 2px var(--c-blue-dim), 0 0 18px var(--c-blue-dim);
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
 }
 
 body {
@@ -28,41 +57,76 @@ body {
   min-width: 320px;
   min-height: 100vh;
   background-color: var(--c-bg);
-  background-image: 
-    radial-gradient(circle at 50% 50%, #111122 0%, #050510 100%);
+  background-image:
+    radial-gradient(circle at 50% 0%, #1a0b0b 0%, #050510 60%);
   color: var(--c-text);
   font-family: var(--font-body);
   -webkit-font-smoothing: antialiased;
   overflow-x: hidden;
 }
 
-/* CRT Overlay Effect */
+/* Enhanced CRT Overlay */
 body::after {
   content: " ";
   display: block;
   position: fixed;
-  top: 0;
-  left: 0;
-  bottom: 0;
-  right: 0;
+  inset: 0;
   background: var(--crt-scanline);
-  background-size: 100% 2px, 3px 100%;
+  background-size: 100% 3px, 6px 100%;
   pointer-events: none;
   z-index: 9999;
-  opacity: 0.15;
+  opacity: 0.6;
+  mix-blend-mode: overlay;
 }
 
-::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
+/* Vignette */
+body::before {
+  content: " ";
+  display: block;
+  position: fixed;
+  inset: 0;
+  background: radial-gradient(circle, transparent 50%, rgba(0, 0, 0, 0.8) 100%);
+  pointer-events: none;
+  z-index: 9998;
 }
+
+/* Scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
 ::-webkit-scrollbar-track {
   background: #000;
 }
+
 ::-webkit-scrollbar-thumb {
   background: #333;
-  border-radius: 4px;
+  border-radius: 3px;
+  border: 1px solid #000;
 }
+
 ::-webkit-scrollbar-thumb:hover {
-  background: #555;
+  background: var(--c-red);
+}
+
+/* Selection */
+::selection {
+  background: var(--c-red);
+  color: #000;
+  text-shadow: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+    transition-duration: 0ms !important;
+    scroll-behavior: auto !important;
+  }
 }

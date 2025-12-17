@@ -8,6 +8,9 @@ import "./config.js";
 import {
   supabaseEnabled,
   dbPing,
+  dbGetUserWithHistory,
+  dbCheckIn,
+  dbListDangerZones,
   dbInsertSos,
   dbInsertThreat,
   dbInsertZoneMarker,
@@ -20,11 +23,25 @@ import {
 
 import { createInitialState } from "./state.js";
 import { checkIn, dangerZones, getOrCreateUser, sweepForBrokenStreaks } from "./logic.js";
+import { GoogleGenerativeAI } from "@google/generative-ai";
 
 const PORT = Number(process.env.PORT || 61234);
 const CLIENT_ORIGIN = process.env.CLIENT_ORIGIN || "http://localhost:5173";
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+
+let genAI = null;
+let model = null;
+if (GEMINI_API_KEY) {
+  genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
+  model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+}
 
 const state = createInitialState();
+
+function isLikelySchemaMissingError(err) {
+  const msg = String(err?.message || "");
+  return msg.includes("Could not find the table") || msg.includes("schema cache") || msg.includes("does not exist");
+}
 
 const app = express();
 app.use(express.json({ limit: "256kb" }));
@@ -67,9 +84,13 @@ app.get("/api/sos", (req, res) => {
   (async () => {
     try {
       if (supabaseEnabled()) {
-        const sos = await dbListSos(200);
-        res.json({ sos });
-        return;
+        try {
+          const sos = await dbListSos(200);
+          res.json({ sos });
+          return;
+        } catch (e) {
+          if (!isLikelySchemaMissingError(e)) throw e;
+        }
       }
       res.json({ sos: state.sosAlerts.slice(-200).reverse() });
     } catch (e) {
@@ -82,9 +103,13 @@ app.get("/api/threats", (req, res) => {
   (async () => {
     try {
       if (supabaseEnabled()) {
-        const threats = await dbListThreats(200);
-        res.json({ threats });
-        return;
+        try {
+          const threats = await dbListThreats(200);
+          res.json({ threats });
+          return;
+        } catch (e) {
+          if (!isLikelySchemaMissingError(e)) throw e;
+        }
       }
       res.json({ threats: state.threats.slice(-200).reverse() });
     } catch (e) {
@@ -94,21 +119,44 @@ app.get("/api/threats", (req, res) => {
 });
 
 app.get("/api/danger-zones", (req, res) => {
-  res.json({ dangerZones: dangerZones(state) });
+  (async () => {
+    try {
+      if (supabaseEnabled()) {
+        try {
+          const dz = await dbListDangerZones(200);
+          res.json({ dangerZones: dz });
+          return;
+        } catch (e) {
+          if (!isLikelySchemaMissingError(e)) throw e;
+        }
+      }
+      res.json({ dangerZones: dangerZones(state) });
+    } catch (e) {
+      res.status(500).json({ error: e.message || "Server Error" });
+    }
+  })();
 });
 
 app.get("/api/map", (req, res) => {
   (async () => {
     try {
       if (supabaseEnabled()) {
-        const [threats, zoneMarkers] = await Promise.all([dbListThreats(200), dbListZoneMarkers(200)]);
-        res.json({
-          camps: state.camps,
-          dangerZones: dangerZones(state),
-          threats,
-          zoneMarkers
-        });
-        return;
+        try {
+          const [threats, zoneMarkers, dz] = await Promise.all([
+            dbListThreats(200),
+            dbListZoneMarkers(200),
+            dbListDangerZones(200)
+          ]);
+          res.json({
+            camps: state.camps,
+            dangerZones: dz,
+            threats,
+            zoneMarkers
+          });
+          return;
+        } catch (e) {
+          if (!isLikelySchemaMissingError(e)) throw e;
+        }
       }
       res.json({
         camps: state.camps,
@@ -126,9 +174,13 @@ app.get("/api/zone-markers", (req, res) => {
   (async () => {
     try {
       if (supabaseEnabled()) {
-        const zoneMarkers = await dbListZoneMarkers(200);
-        res.json({ zoneMarkers });
-        return;
+        try {
+          const zoneMarkers = await dbListZoneMarkers(200);
+          res.json({ zoneMarkers });
+          return;
+        } catch (e) {
+          if (!isLikelySchemaMissingError(e)) throw e;
+        }
       }
       res.json({ zoneMarkers: state.zoneMarkers.slice(-200).reverse() });
     } catch (e) {
@@ -143,7 +195,11 @@ app.post("/api/zone-markers", (req, res) => {
       const marker = createZoneMarker(req.body);
       state.zoneMarkers.push(marker);
       if (supabaseEnabled()) {
-        await dbInsertZoneMarker(marker);
+        try {
+          await dbInsertZoneMarker(marker);
+        } catch (e) {
+          if (!isLikelySchemaMissingError(e)) throw e;
+        }
       }
       io.emit("zone_marker_add", marker);
       res.json({ zoneMarker: marker });
@@ -193,23 +249,53 @@ function createZoneMarker(payload) {
 }
 
 app.get("/api/users/:userId", (req, res) => {
-  try {
-    const user = getOrCreateUser(state, { userId: req.params.userId, name: null });
-    res.json({ user });
-  } catch (e) {
-    res.status(400).json({ error: e.message || "Bad Request" });
-  }
+  (async () => {
+    try {
+      if (supabaseEnabled()) {
+        try {
+          const user = await dbGetUserWithHistory(req.params.userId);
+          res.json({ user });
+          return;
+        } catch (e) {
+          if (!isLikelySchemaMissingError(e)) throw e;
+        }
+      }
+      const user = getOrCreateUser(state, { userId: req.params.userId, name: null });
+      res.json({ user });
+    } catch (e) {
+      res.status(400).json({ error: e.message || "Bad Request" });
+    }
+  })();
 });
 
 app.post("/api/checkin", (req, res) => {
-  try {
-    const user = checkIn(state, req.body);
-    io.emit("checkin_update", { user });
-    io.emit("danger_zones_update", { dangerZones: dangerZones(state) });
-    res.json({ user });
-  } catch (e) {
-    res.status(400).json({ error: e.message || "Bad Request" });
-  }
+  (async () => {
+    try {
+      if (supabaseEnabled()) {
+        try {
+          const user = await dbCheckIn(req.body);
+          io.emit("checkin_update", { user });
+          try {
+            io.emit("danger_zones_update", { dangerZones: await dbListDangerZones(200) });
+          } catch (e) {
+            if (!isLikelySchemaMissingError(e)) throw e;
+            io.emit("danger_zones_update", { dangerZones: dangerZones(state) });
+          }
+          res.json({ user });
+          return;
+        } catch (e) {
+          if (!isLikelySchemaMissingError(e)) throw e;
+        }
+      }
+
+      const user = checkIn(state, req.body);
+      io.emit("checkin_update", { user });
+      io.emit("danger_zones_update", { dangerZones: dangerZones(state) });
+      res.json({ user });
+    } catch (e) {
+      res.status(400).json({ error: e.message || "Bad Request" });
+    }
+  })();
 });
 
 app.post("/api/sos", (req, res) => {
@@ -708,20 +794,95 @@ io.on("connection", (socket) => {
   });
 
   socket.on("checkin", (payload, ack) => {
-    try {
-      const user = checkIn(state, payload);
-      io.emit("checkin_update", { user });
-      io.emit("danger_zones_update", { dangerZones: dangerZones(state) });
-      if (typeof ack === "function") ack({ ok: true, user });
-    } catch (e) {
-      if (typeof ack === "function") ack({ ok: false, error: e.message || "Bad Request" });
-    }
+    (async () => {
+      try {
+        if (supabaseEnabled()) {
+          try {
+            const user = await dbCheckIn(payload);
+            io.emit("checkin_update", { user });
+            try {
+              io.emit("danger_zones_update", { dangerZones: await dbListDangerZones(200) });
+            } catch (e) {
+              if (!isLikelySchemaMissingError(e)) throw e;
+              io.emit("danger_zones_update", { dangerZones: dangerZones(state) });
+            }
+            if (typeof ack === "function") ack({ ok: true, user });
+            return;
+          } catch (e) {
+            if (!isLikelySchemaMissingError(e)) throw e;
+          }
+        }
+
+        const user = checkIn(state, payload);
+        io.emit("checkin_update", { user });
+        io.emit("danger_zones_update", { dangerZones: dangerZones(state) });
+        if (typeof ack === "function") ack({ ok: true, user });
+      } catch (e) {
+        if (typeof ack === "function") ack({ ok: false, error: e.message || "Bad Request" });
+      }
+    })();
   });
 });
 
+app.post("/api/gemini/chat", (req, res) => {
+  (async () => {
+    try {
+      if (!GEMINI_API_KEY) {
+        res.status(503).json({ error: "AI service unavailable (Key missing)" });
+        return;
+      }
+      const { message } = req.body;
+      const prompt = `
+        You are an AI assistant in a 'Stranger Things' themed disaster coordination app called "The Network".
+        Your persona: "CEREBRO", a ham-radio based intelligent system.
+        Tone: Retro-tech, helpful, urgent, slightly sci-fi.
+        
+        Keep answers short (under 60 words) and thematic.
+        User asks: ${message}
+      `;
+
+      const response = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            contents: [{ parts: [{ text: prompt }] }]
+          })
+        }
+      );
+
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.error?.message || "Gemini API Error");
+      }
+
+      const text = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
+      res.json({ text });
+    } catch (e) {
+      console.error("Gemini Error:", e);
+      res.status(500).json({ error: e.message || "AI transmission failed" });
+    }
+  })();
+});
+
 setInterval(() => {
-  sweepForBrokenStreaks(state);
-  io.emit("danger_zones_update", { dangerZones: dangerZones(state) });
+  (async () => {
+    try {
+      if (supabaseEnabled()) {
+        try {
+          io.emit("danger_zones_update", { dangerZones: await dbListDangerZones(200) });
+          return;
+        } catch (e) {
+          if (!isLikelySchemaMissingError(e)) throw e;
+        }
+      }
+      sweepForBrokenStreaks(state);
+      io.emit("danger_zones_update", { dangerZones: dangerZones(state) });
+    } catch {
+      // ignore periodic failures
+    }
+  })();
 }, 30_000);
 
 server.listen(PORT, () => {

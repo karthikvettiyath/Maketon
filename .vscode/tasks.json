@@ -12,6 +12,238 @@
 			"isBackground": true,
 			"problemMatcher": [],
 			"group": "build"
+		},
+		{
+			"label": "Maketon: dev (server+client)",
+			"type": "shell",
+			"command": "npm",
+			"args": [
+				"run",
+				"dev"
+			],
+			"isBackground": true,
+			"problemMatcher": [],
+			"group": "build"
+		},
+		{
+			"label": "Maketon: server dev",
+			"type": "shell",
+			"command": "npm",
+			"args": [
+				"--prefix",
+				"server",
+				"run",
+				"dev"
+			],
+			"isBackground": true,
+			"problemMatcher": [],
+			"group": "build"
+		},
+		{
+			"label": "Maketon: dev (server+client)",
+			"type": "shell",
+			"command": "npm",
+			"args": [
+				"run",
+				"dev"
+			],
+			"isBackground": true,
+			"problemMatcher": [],
+			"group": "build"
+		},
+		{
+			"label": "Maketon: dev (server+client)",
+			"type": "shell",
+			"command": "npm",
+			"args": [
+				"run",
+				"dev"
+			],
+			"isBackground": true,
+			"problemMatcher": [],
+			"group": "build"
+		},
+		{
+			"label": "Maketon: dev (server+client)",
+			"type": "shell",
+			"command": "npm",
+			"args": [
+				"run",
+				"dev"
+			],
+			"isBackground": true,
+			"problemMatcher": [],
+			"group": "build"
+		},
+		{
+			"label": "Maketon: dev (server+client)",
+			"type": "shell",
+			"command": "npm",
+			"args": [
+				"run",
+				"dev"
+			],
+			"isBackground": true,
+			"problemMatcher": [],
+			"group": "build"
+		},
+		{
+			"label": "Probe API",
+			"type": "shell",
+			"command": "node",
+			"args": [
+				"scripts/probe-api.mjs"
+			],
+			"isBackground": false
+		},
+		{
+			"label": "Dev Server (Backend)",
+			"type": "shell",
+			"command": "npm",
+			"args": [
+				"--prefix",
+				"server",
+				"run",
+				"dev"
+			],
+			"isBackground": true
+		},
+		{
+			"label": "Dev (Client + Server)",
+			"type": "shell",
+			"command": "npm",
+			"args": [
+				"run",
+				"dev"
+			],
+			"isBackground": true
+		},
+		{
+			"label": "Dev (Client + Server) - Restart",
+			"type": "shell",
+			"command": "npm",
+			"args": [
+				"run",
+				"dev"
+			],
+			"isBackground": true
+		},
+		{
+			"label": "Dev (Client + Server)",
+			"type": "shell",
+			"command": "npm",
+			"args": [
+				"run",
+				"dev"
+			],
+			"isBackground": true
+		},
+		{
+			"label": "Free Dev Ports",
+			"type": "shell",
+			"command": "powershell",
+			"args": [
+				"-NoProfile",
+				"-ExecutionPolicy",
+				"Bypass",
+				"-Command",
+				"$ports=@(5173,5174,5175,61234); foreach($port in $ports){ $con=Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1; if($con){ $pid=$con.OwningProcess; Write-Host \"Port $port in use by PID $pid\"; Stop-Process -Id $pid -Force -ErrorAction SilentlyContinue; } else { Write-Host \"Port $port free\" } }"
+			],
+			"isBackground": false
+		},
+		{
+			"label": "Free Dev Ports (cmd)",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"powershell -NoProfile -ExecutionPolicy Bypass -Command \"$ports=@(5173,5174,5175,61234); foreach($port in $ports){ $con=Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1; if($con){ $pid=$con.OwningProcess; Write-Host \\\"Port $port in use by PID $pid\\\"; Stop-Process -Id $pid -Force -ErrorAction SilentlyContinue; } else { Write-Host \\\"Port $port free\\\" } }\""
+			],
+			"isBackground": false
+		},
+		{
+			"label": "Free Dev Ports (PS)",
+			"type": "shell",
+			"command": "$ErrorActionPreference='SilentlyContinue'; $ports=@(5173,5174,5175,61234); foreach($port in $ports){ $con=Get-NetTCPConnection -LocalPort $port -State Listen | Select-Object -First 1; if($con){ $pid=$con.OwningProcess; Write-Host \"Port $port in use by PID $pid\"; Stop-Process -Id $pid -Force; } else { Write-Host \"Port $port free\" } }; exit 0",
+			"isBackground": false
+		},
+		{
+			"label": "Check Ports",
+			"type": "shell",
+			"command": "$ports=@(5173,5174,5175,61234); foreach($port in $ports){ $con=Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1; if($con){ Write-Host \"LISTEN $port PID $($con.OwningProcess)\" } else { Write-Host \"FREE $port\" } }; exit 0",
+			"isBackground": false
+		},
+		{
+			"label": "Kill Dev Port PIDs",
+			"type": "shell",
+			"command": "$ports=@(5173,5174,5175,61234); $conns=@(); foreach($port in $ports){ $c=Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1; if($c){ $conns += $c } }; $pids = $conns | Select-Object -ExpandProperty OwningProcess -Unique; foreach($pid in $pids){ if($pid -and $pid -ne $PID){ Write-Host \"Stopping PID $pid\"; try{ Stop-Process -Id $pid -Force -ErrorAction Stop } catch { Write-Host (\"Failed PID {0}: {1}\" -f $pid, $_.Exception.Message) } } }; Start-Sleep -Milliseconds 300; foreach($port in $ports){ $c=Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1; if($c){ Write-Host \"STILL LISTEN $port PID $($c.OwningProcess)\" } else { Write-Host \"FREE $port\" } }; exit 0",
+			"isBackground": false
+		},
+		{
+			"label": "Kill Dev Port PIDs (fixed)",
+			"type": "shell",
+			"command": "$ports=@(5173,5174,5175,61234); $conns=@(); foreach($port in $ports){ $c=Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1; if($c){ $conns += $c } }; $procIds = $conns | Select-Object -ExpandProperty OwningProcess -Unique; foreach($procId in $procIds){ if($procId -and $procId -ne $PID){ Write-Host \"Stopping PID $procId\"; try{ Stop-Process -Id $procId -Force -ErrorAction Stop } catch { Write-Host (\"Failed PID {0}: {1}\" -f $procId, $_.Exception.Message) } } }; Start-Sleep -Milliseconds 300; foreach($port in $ports){ $c=Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1; if($c){ Write-Host \"STILL LISTEN $port PID $($c.OwningProcess)\" } else { Write-Host \"FREE $port\" } }; exit 0",
+			"isBackground": false
+		},
+		{
+			"label": "Dev (Client + Server)",
+			"type": "shell",
+			"command": "npm",
+			"args": [
+				"run",
+				"dev"
+			],
+			"isBackground": true
+		},
+		{
+			"label": "Check Ports (after dev)",
+			"type": "shell",
+			"command": "$ports=@(5173,5174,5175,61234); foreach($port in $ports){ $c=Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1; if($c){ $p=Get-Process -Id $c.OwningProcess -ErrorAction SilentlyContinue; Write-Host \"LISTEN $port PID $($c.OwningProcess) $($p.ProcessName)\" } else { Write-Host \"FREE $port\" } }; exit 0",
+			"isBackground": false
+		},
+		{
+			"label": "Dev Server Only",
+			"type": "shell",
+			"command": "npm",
+			"args": [
+				"--prefix",
+				"server",
+				"run",
+				"dev"
+			],
+			"isBackground": true
+		},
+		{
+			"label": "Dev Client Only",
+			"type": "shell",
+			"command": "npm",
+			"args": [
+				"--prefix",
+				"client",
+				"run",
+				"dev",
+				"--",
+				"--port",
+				"5173",
+				"--strictPort"
+			],
+			"isBackground": true
+		},
+		{
+			"label": "Dev Client Only",
+			"type": "shell",
+			"command": "npm",
+			"args": [
+				"--prefix",
+				"client",
+				"run",
+				"dev",
+				"--",
+				"--port",
+				"5173",
+				"--strictPort"
+			],
+			"isBackground": true
 		}
 	]
 }

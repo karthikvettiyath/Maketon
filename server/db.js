@@ -1,18 +1,21 @@
 import { createClient } from "@supabase/supabase-js";
+import { utcDayKey, utcYesterdayDayKey, isOlderThanYesterdayDayKey } from "./time.js";
 
 function getSupabase() {
   const url = process.env.SUPABASE_URL;
-  const key =
-    process.env.SUPABASE_SERVICE_ROLE_KEY ||
-    process.env.SUPABASE_ANON_KEY ||
-    process.env.SUPABASE_KEY;
+  // Prefer the Service Role Key for server-side operations.
+  // Fall back to the anon key for demos where RLS is configured accordingly.
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY;
+
   if (!url || !key) return null;
 
   // Cache client for the process lifetime.
-  if (!globalThis.__maketon_supabase) {
+  const cacheKey = `${url}::${key.slice(0, 8)}`;
+  if (!globalThis.__maketon_supabase || globalThis.__maketon_supabase_key !== cacheKey) {
     globalThis.__maketon_supabase = createClient(url, key, {
       auth: { persistSession: false, autoRefreshToken: false }
     });
+    globalThis.__maketon_supabase_key = cacheKey;
   }
   return globalThis.__maketon_supabase;
 }
@@ -29,6 +32,190 @@ export async function dbPing() {
   const { error } = await sb.from("zones").select("id").limit(1);
   if (error) throw error;
   return { enabled: true };
+}
+
+function normalizeUserId(value) {
+  const id = String(value || "").trim();
+  if (!id) throw new Error("userId is required");
+  return id;
+}
+
+function normalizeName(value) {
+  return String(value || "Unknown Survivor").slice(0, 60);
+}
+
+function normalizeCheckInNote(value) {
+  const s = String(value || "").trim();
+  if (!s) return null;
+  return s.slice(0, 180);
+}
+
+async function dbUpsertUserBase(sb, { userId, name }) {
+  const id = normalizeUserId(userId);
+  const nm = name ? normalizeName(name) : null;
+
+  // Ensure a row exists.
+  const { error: upsertErr } = await sb
+    .from("users")
+    .upsert(
+      {
+        id,
+        ...(nm ? { name: nm } : {})
+      },
+      { onConflict: "id" }
+    );
+  if (upsertErr) throw upsertErr;
+
+  const { data: row, error } = await sb
+    .from("users")
+    .select("id,name,streak,last_check_in_at,last_check_in_day_key,last_lat,last_lng,status,missing_since")
+    .eq("id", id)
+    .maybeSingle();
+  if (error) throw error;
+  return row;
+}
+
+function rowToUser(row, now = new Date()) {
+  if (!row) return null;
+  const lastDayKey = row.last_check_in_day_key || null;
+  const lastAt = row.last_check_in_at ? new Date(row.last_check_in_at) : null;
+
+  let status = row.status || "unknown";
+  let missingSince = row.missing_since || null;
+  if (lastDayKey && isOlderThanYesterdayDayKey(lastDayKey, now)) {
+    status = "missing";
+    missingSince = missingSince || (lastAt ? lastAt.toISOString() : null);
+  } else if (lastDayKey) {
+    status = "ok";
+    missingSince = null;
+  }
+
+  const loc = toLocation(row.last_lat, row.last_lng);
+  return {
+    id: row.id,
+    name: row.name,
+    streak: row.streak ?? 0,
+    lastCheckInAt: lastAt,
+    lastCheckInDayKey: lastDayKey,
+    lastKnownLocation: loc,
+    checkInHistory: [],
+    status,
+    missingSince,
+    dangerZone: null
+  };
+}
+
+export async function dbGetUserWithHistory(userId, now = new Date()) {
+  const sb = getSupabase();
+  if (!sb) throw new Error("Supabase not configured");
+
+  const row = await dbUpsertUserBase(sb, { userId, name: null });
+  const user = rowToUser(row, now);
+
+  const { data: checkins, error } = await sb
+    .from("checkins")
+    .select("day_key,checked_in_at,lat,lng,note")
+    .eq("user_id", user.id)
+    .order("day_key", { ascending: true })
+    .limit(21);
+  if (error) throw error;
+
+  user.checkInHistory = (checkins || []).map((c) => ({
+    dayKey: c.day_key,
+    at: c.checked_in_at,
+    location: toLocation(c.lat, c.lng),
+    note: c.note
+  }));
+
+  return user;
+}
+
+export async function dbCheckIn(payload, now = new Date()) {
+  const sb = getSupabase();
+  if (!sb) throw new Error("Supabase not configured");
+
+  const { userId, name, location, note } = payload || {};
+  const id = normalizeUserId(userId);
+  const nm = normalizeName(name);
+  const loc = location ? toLocation(location.lat, location.lng) : null;
+  const cleanNote = normalizeCheckInNote(note);
+
+  const row = await dbUpsertUserBase(sb, { userId: id, name: nm });
+
+  const todayKey = utcDayKey(now);
+  const yesterdayKey = utcYesterdayDayKey(now);
+  const prevKey = row?.last_check_in_day_key || null;
+  const prevStreak = Number.isFinite(Number(row?.streak)) ? Number(row.streak) : 0;
+
+  let nextStreak = prevStreak;
+  if (prevKey === todayKey) {
+    nextStreak = Math.max(1, prevStreak || 1);
+  } else if (prevKey === yesterdayKey) {
+    nextStreak = Math.max(1, (prevStreak || 0) + 1);
+  } else {
+    nextStreak = 1;
+  }
+
+  const upd = {
+    id,
+    name: nm,
+    streak: nextStreak,
+    last_check_in_at: now.toISOString(),
+    last_check_in_day_key: todayKey,
+    status: "ok",
+    missing_since: null,
+    ...(loc ? { last_lat: loc.lat, last_lng: loc.lng } : {})
+  };
+
+  const { error: updErr } = await sb.from("users").upsert(upd, { onConflict: "id" });
+  if (updErr) throw updErr;
+
+  const { error: checkErr } = await sb
+    .from("checkins")
+    .upsert(
+      {
+        user_id: id,
+        day_key: todayKey,
+        checked_in_at: now.toISOString(),
+        lat: loc?.lat ?? null,
+        lng: loc?.lng ?? null,
+        note: cleanNote
+      },
+      { onConflict: "user_id,day_key" }
+    );
+  if (checkErr) throw checkErr;
+
+  return dbGetUserWithHistory(id, now);
+}
+
+export async function dbListDangerZones(limit = 200, now = new Date()) {
+  const sb = getSupabase();
+  if (!sb) throw new Error("Supabase not configured");
+
+  const { data: rows, error } = await sb
+    .from("users")
+    .select("id,name,last_check_in_at,last_check_in_day_key,last_lat,last_lng")
+    .not("last_check_in_day_key", "is", null)
+    .order("last_check_in_at", { ascending: false })
+    .limit(Math.max(1, Math.min(500, limit * 4)));
+  if (error) throw error;
+
+  const zones = [];
+  for (const r of rows || []) {
+    if (!isOlderThanYesterdayDayKey(r.last_check_in_day_key, now)) continue;
+    const loc = toLocation(r.last_lat, r.last_lng);
+    zones.push({
+      id: `dz_${r.id}_${r.last_check_in_day_key}`,
+      type: "danger-zone",
+      reason: "streak-broken",
+      userId: r.id,
+      name: r.name,
+      location: loc,
+      lastSeenAt: r.last_check_in_at
+    });
+    if (zones.length >= limit) break;
+  }
+  return zones;
 }
 
 function toLocation(lat, lng) {
@@ -167,17 +354,17 @@ export async function dbToggleSosResolved(sosId, { userId, name }) {
   const isResolved = Boolean(row?.resolved_at);
   const next = isResolved
     ? {
-        status: "open",
-        resolved_at: null,
-        resolved_by_user_id: null,
-        resolved_by_name: null
-      }
+      status: "open",
+      resolved_at: null,
+      resolved_by_user_id: null,
+      resolved_by_name: null
+    }
     : {
-        status: "resolved",
-        resolved_at: new Date().toISOString(),
-        resolved_by_user_id: String(userId || "").trim() || null,
-        resolved_by_name: String(name || "Unknown Survivor").slice(0, 60)
-      };
+      status: "resolved",
+      resolved_at: new Date().toISOString(),
+      resolved_by_user_id: String(userId || "").trim() || null,
+      resolved_by_name: String(name || "Unknown Survivor").slice(0, 60)
+    };
 
   const { error: updErr } = await sb.from("sos_alerts").update(next).eq("id", id);
   if (updErr) throw updErr;

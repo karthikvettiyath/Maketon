@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { io } from "socket.io-client";
+import { Intel } from "./Intel";
 import {
   MapContainer,
   Marker,
@@ -164,6 +165,8 @@ function HawkinsProtocol({
   const mediaStreamRef = useRef(null);
   const micIntervalRef = useRef(null);
 
+  const [audioLogs, setAudioLogs] = useState([]);
+
   function stopTotem() {
     const a = audioRef.current;
     if (!a) return;
@@ -269,7 +272,7 @@ function HawkinsProtocol({
         // "Silence" algorithm: track an ambient baseline and look for sudden spikes.
         // Use the *previous* baseline for spike detection so spikes don't self-cancel.
         const prevBase = baselineRef.current || amp;
-        const dangerThreshold = 8000;
+        const dangerThreshold = 500;
         const spike = amp > Math.max(dangerThreshold, prevBase * 2.6);
 
         // Update baseline slowly during spikes so it doesn't learn the spike.
@@ -316,6 +319,15 @@ function HawkinsProtocol({
           if (now - vibCooldownRef.current > 900) {
             vibCooldownRef.current = now;
             if (navigator.vibrate) navigator.vibrate([0, 200, 100, 200]);
+          }
+
+          // Add local log entry for audio detection
+          if (now - vibCooldownRef.current > 2000) { // throttle logs slightly independent of vibe
+            setAudioLogs(prev => [{
+              id: now,
+              time: new Date().toLocaleTimeString(),
+              message: "Demogorgon spotted!"
+            }, ...prev].slice(0, 50));
           }
         }
       }, 100);
@@ -510,6 +522,29 @@ function HawkinsProtocol({
             Tip: switch to HIDING, then clap near the mic to simulate a growl spike.
           </div>
         </div>
+
+      </div>
+
+      <div className="audioLogPanel">
+        <div className="panelHeader" style={{ marginTop: 20 }}>
+          <div className="panelTitle">Audio Detection Log</div>
+        </div>
+        <div className="log">
+          {(audioLogs || []).length === 0 ? (
+            <div className="empty">No detections yet. Silence is golden.</div>
+          ) : (
+            audioLogs.map((log) => (
+              <div key={log.id} className="logItem logItemDetect">
+                <div className="logTop">
+                  <span className="logName" style={{ color: "var(--c-danger)" }}>
+                    ⚠️ {log.message}
+                  </span>
+                  <span className="logTime">{log.time}</span>
+                </div>
+              </div>
+            ))
+          )}
+        </div>
       </div>
     </section>
   );
@@ -573,6 +608,12 @@ export default function App() {
   const [mapFocus, setMapFocus] = useState(null);
 
   const stealthLock = hawkinsMode === "hiding";
+
+  function locateOnMap(loc, zoom = 14) {
+    if (!loc?.lat || !loc?.lng) return;
+    setActiveTab("map");
+    setMapFocus({ center: [loc.lat, loc.lng], zoom });
+  }
 
   const [checkinNote, setCheckinNote] = useState("");
   const [checkinAttachGps, setCheckinAttachGps] = useState(true);
@@ -1320,6 +1361,9 @@ export default function App() {
         <TabButton active={activeTab === "hawkins"} onClick={() => setActiveTab("hawkins")}>
           H.A.W.K.I.N.S. Protocol
         </TabButton>
+        <TabButton active={activeTab === "intel"} onClick={() => setActiveTab("intel")}>
+          CEREBRO AI
+        </TabButton>
       </nav>
 
       {statusLine ? (
@@ -2020,13 +2064,13 @@ export default function App() {
                   >
                     GPS: {checkinAttachGps ? "ON" : "OFF"}
                   </button>
-                  <button className="chip" type="button" onClick={() => applyCheckInTemplate("STATUS: all clear. Staying mobile.") } disabled={busy}>
+                  <button className="chip" type="button" onClick={() => applyCheckInTemplate("STATUS: all clear. Staying mobile.")} disabled={busy}>
                     All Clear
                   </button>
-                  <button className="chip" type="button" onClick={() => applyCheckInTemplate("STATUS: low supplies. Need water/food.") } disabled={busy}>
+                  <button className="chip" type="button" onClick={() => applyCheckInTemplate("STATUS: low supplies. Need water/food.")} disabled={busy}>
                     Low Supplies
                   </button>
-                  <button className="chip" type="button" onClick={() => applyCheckInTemplate("STATUS: injured but stable. Avoid travel.") } disabled={busy}>
+                  <button className="chip" type="button" onClick={() => applyCheckInTemplate("STATUS: injured but stable. Avoid travel.")} disabled={busy}>
                     Injured
                   </button>
                 </div>
@@ -2050,6 +2094,36 @@ export default function App() {
                 <div className="cardTitle">Active Danger Zones</div>
                 <div className="meta">Derived from survivors with broken streaks.</div>
                 <div className="meta">Count: {dangerZones.length}</div>
+
+                {dangerZones.length === 0 ? (
+                  <div className="meta" style={{ marginTop: 10 }}>
+                    None right now. Danger zones appear when a survivor misses daily check-ins and has a last known location.
+                  </div>
+                ) : (
+                  <div className="presenceList" style={{ marginTop: 10 }}>
+                    {dangerZones.slice(0, 8).map((z) => (
+                      <div key={z.id} className="presenceItem">
+                        <span style={{ color: "#eee" }}>{z.name || "Survivor"}</span>
+                        <span className="spacer" />
+                        {z.location ? (
+                          <button
+                            className="chip"
+                            type="button"
+                            onClick={() => locateOnMap(z.location, 15)}
+                            title="Open Map and focus this danger zone"
+                            disabled={stealthLock}
+                          >
+                            Locate
+                          </button>
+                        ) : (
+                          <span className="mono" style={{ color: "#888" }}>
+                            no GPS
+                          </span>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
 
               <div className="card">
@@ -2101,6 +2175,9 @@ export default function App() {
               autoReportThreat={autoReportThreat}
             />
           </div>
+        ) : null}
+        {activeTab === "intel" ? (
+          <Intel identity={identity} stealthLock={stealthLock} apiPost={apiPost} />
         ) : null}
       </main>
 

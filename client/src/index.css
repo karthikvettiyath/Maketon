@@ -1,0 +1,68 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&family=VT323&display=swap');
+
+:root {
+  --font-body: 'Inter', sans-serif;
+  --font-mono: 'VT323', monospace;
+
+  /* Stranger Things Palette */
+  --c-bg: #050510;
+  --c-bg-panel: rgba(10, 15, 30, 0.7);
+  --c-text: #e0e0e0;
+  --c-red: #ff3333;
+  --c-red-dim: rgba(255, 51, 51, 0.2);
+  --c-red-glow: rgba(255, 51, 51, 0.6);
+  --c-blue: #3388ff;
+  --c-blue-dim: rgba(51, 136, 255, 0.2);
+  --c-gold: #ffcc00;
+  
+  --shadow-glow: 0 0 10px rgba(255, 51, 51, 0.5);
+  --crt-scanline: linear-gradient(
+    rgba(18, 16, 16, 0) 50%,
+    rgba(0, 0, 0, 0.25) 50%
+  );
+  --crt-scanline-size: 4px;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+  background-color: var(--c-bg);
+  background-image: 
+    radial-gradient(circle at 50% 50%, #111122 0%, #050510 100%);
+  color: var(--c-text);
+  font-family: var(--font-body);
+  -webkit-font-smoothing: antialiased;
+  overflow-x: hidden;
+}
+
+/* CRT Overlay Effect */
+body::after {
+  content: " ";
+  display: block;
+  position: fixed;
+  top: 0;
+  left: 0;
+  bottom: 0;
+  right: 0;
+  background: var(--crt-scanline);
+  background-size: 100% 2px, 3px 100%;
+  pointer-events: none;
+  z-index: 9999;
+  opacity: 0.15;
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: #000;
+}
+::-webkit-scrollbar-thumb {
+  background: #333;
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #555;
+}

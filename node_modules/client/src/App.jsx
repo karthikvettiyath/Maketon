@@ -164,6 +164,7 @@ function HawkinsProtocol({
   const analyserRef = useRef(null);
   const mediaStreamRef = useRef(null);
   const micIntervalRef = useRef(null);
+  const logCooldownRef = useRef(0);
 
   const [audioLogs, setAudioLogs] = useState([]);
 
@@ -322,7 +323,8 @@ function HawkinsProtocol({
           }
 
           // Add local log entry for audio detection
-          if (now - vibCooldownRef.current > 2000) { // throttle logs slightly independent of vibe
+          if (now - logCooldownRef.current > 2000) {
+            logCooldownRef.current = now;
             setAudioLogs(prev => [{
               id: now,
               time: new Date().toLocaleTimeString(),
@@ -493,7 +495,7 @@ function HawkinsProtocol({
             <div style={{ width: 220 }}>
               <div className="meta">Amplitude: {amplitude}</div>
               <div className="meta">Baseline: {Math.round(baseline || 0)}</div>
-              <div className="meta">Danger threshold: 8000 + spike filter</div>
+              <div className="meta">Danger threshold: 500 + spike filter</div>
             </div>
           </div>
 

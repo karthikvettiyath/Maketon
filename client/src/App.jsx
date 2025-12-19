@@ -1384,14 +1384,19 @@ export default function App() {
 
             <div className="chatHeaderRow">
               <label className="label" style={{ minWidth: 260 }}>
-                Sector
-                <select className="select" value={zoneId} onChange={(e) => setZoneId(e.target.value)}>
-                  {(zones.length ? zones : [{ id: "castle-byers", name: "Castle Byers" }]).map((z) => (
-                    <option key={z.id} value={z.id}>
-                      {z.name}
-                    </option>
-                  ))}
-                </select>
+                Radio Frequency (Channel)
+                <div className="frequencyTuner">
+                  <input
+                    className="input mono"
+                    value={zoneId}
+                    onChange={(e) => setZoneId(e.target.value)}
+                    placeholder="Enter channel name..."
+                    maxLength={20}
+                  />
+                  <div className="meta" style={{ marginTop: 4 }}>
+                    Share this channel name to talk privately.
+                  </div>
+                </div>
               </label>
               <div className="chatMetaRow">
                 <span className="pill">Presence: {zonePresence?.count ?? 0}</span>

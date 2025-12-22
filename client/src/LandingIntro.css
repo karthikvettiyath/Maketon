@@ -1,0 +1,286 @@
+.introRoot {
+  position: fixed;
+  inset: 0;
+  z-index: 9997;
+  display: grid;
+  place-items: center;
+  background: #000;
+  color: #fff;
+  overflow: hidden;
+  opacity: 1;
+  transform: translateZ(0);
+  transition: opacity 420ms ease, filter 420ms ease;
+}
+
+.introRootExiting {
+  opacity: 0;
+  filter: blur(2px);
+}
+
+.introBg {
+  position: absolute;
+  inset: 0;
+  background: #000;
+  /* subtle film grain or vignette */
+  background-image:
+    radial-gradient(circle at center, transparent 0%, #000 90%);
+}
+
+.introBg::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0.08;
+  background:
+    repeating-linear-gradient(
+      to bottom,
+      rgba(255, 255, 255, 0.02) 0px,
+      rgba(255, 255, 255, 0.02) 1px,
+      rgba(0, 0, 0, 0) 3px,
+      rgba(0, 0, 0, 0) 5px
+    );
+}
+
+.introBg::after {
+  content: '';
+  position: absolute;
+  inset: -40px;
+  pointer-events: none;
+  opacity: 0.10;
+  background:
+    radial-gradient(circle at 20% 30%, rgba(255, 0, 0, 0.10), rgba(0, 0, 0, 0) 55%),
+    radial-gradient(circle at 80% 70%, rgba(255, 0, 0, 0.06), rgba(0, 0, 0, 0) 55%);
+  filter: blur(8px);
+}
+
+.introFrame {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.introFrameOn {
+  opacity: 1;
+}
+
+.introCenter {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  text-align: center;
+  width: 100%;
+}
+
+.introTitle {
+  /* The core ST font stack */
+  font-family: 'ITC Benguiat', 'Benguiat', 'Merriweather', serif;
+  font-weight: 900;
+  font-size: clamp(42px, 9vw, 120px);
+  position: relative;
+  /* Use a pure red color with a text stroke if supported */
+  color: transparent;
+  -webkit-text-stroke: 2px #c1121f;
+
+  /* Fallback color if stroke isn't great or for inner glow */
+  color: #000;
+
+  /* Letter tracking is initially wide */
+  display: flex;
+  justify-content: center;
+  gap: 0.1em;
+
+  /* Container perspective for any 3d effect */
+  perspective: 1000px;
+}
+
+
+
+.introLetter {
+  display: inline-block;
+  will-change: transform, opacity, filter;
+  opacity: 0;
+
+  /* Initial state: Huge, blown out, far apart handled by keyframes */
+  animation: st-assemble 6s cubic-bezier(0.25, 0.46, 0.45, 0.94) forwards;
+  /* Stagger the animation based on --i */
+  animation-delay: calc(var(--i) * 200ms);
+
+  /* Red neon glow */
+  text-shadow:
+    0 0 10px #c1121f,
+    0 0 20px #c1121f;
+}
+
+.introLetterSpace {
+  width: 0.5em;
+  display: inline-block;
+}
+
+/* 
+  Stranger Things Assembly Animation:
+  Starts huge (scale 30+), transparent.
+  Zooms in to scale 1.
+  Moves from sides slightly? 
+  Actually the classic intro is they slide in from outside boundaries and interlock.
+  But a "zoom in" assembly is easier to make responsive and looks very "trailer-like".
+*/
+@keyframes st-assemble {
+  0% {
+    opacity: 0;
+    transform: scale(30);
+    filter: blur(20px);
+    color: #ffdce0;
+    /* Bright core start */
+    text-shadow: 0 0 80px #ff0000;
+  }
+
+  15% {
+    opacity: 1;
+    transform: scale(5);
+    color: #e62222;
+  }
+
+  100% {
+    opacity: 1;
+    transform: scale(1);
+    filter: blur(0);
+    color: #000;
+    /* Hollow center look */
+    -webkit-text-stroke: 2px #e00e1f;
+    text-shadow:
+      0 0 10px #7a0006,
+      0 0 20px #7a0006;
+  }
+}
+
+/* Add the top/bottom bars that appear in the logo */
+.introTitle::before,
+.introTitle::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: #e00e1f;
+  box-shadow: 0 0 10px #e00e1f;
+  opacity: 0;
+  transform: scaleX(0);
+  transition: opacity 1s ease, transform 2s ease-out;
+}
+
+.introTitle::before {
+  top: 0;
+  transform-origin: left;
+}
+
+.introTitle::after {
+  bottom: 0;
+  transform-origin: right;
+}
+
+/* Trigger bars after letters assemble */
+.introCenter:hover .introTitle::before,
+/* Debug hover or just timed */
+.introTitleOn::before,
+.introTitleOn::after {
+  opacity: 0.8;
+  transform: scaleX(1);
+  transition-delay: 4.5s;
+  /* Wait for assembly */
+}
+
+.introSub {
+  margin-top: 32px;
+  font-family: 'Merriweather', serif;
+  text-transform: uppercase;
+  letter-spacing: 0.3em;
+  font-size: 18px;
+  color: #e00e1f;
+  text-shadow: 0 0 8px #7a0006;
+  opacity: 0;
+  animation: fade-in-up 2s ease forwards;
+  animation-delay: 5s;
+}
+
+@keyframes fade-in-up {
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.introActions {
+  margin-top: 48px;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 20px;
+  z-index: 10;
+  opacity: 0;
+  animation: fade-in 1s ease forwards;
+  animation-delay: 6s;
+}
+
+@keyframes fade-in {
+  to {
+    opacity: 1;
+  }
+}
+
+.introBtn {
+  appearance: none;
+  background: transparent;
+  color: #fff;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  padding: 12px 24px;
+  border-radius: 999px;
+  text-transform: uppercase;
+  letter-spacing: 2px;
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.introBtn:hover {
+  border-color: #e00e1f;
+  text-shadow: 0 0 5px #e00e1f;
+  box-shadow: 0 0 10px rgba(224, 14, 31, 0.2);
+}
+
+.introBtn:disabled,
+.introBtn[aria-disabled='true'] {
+  opacity: 0.55;
+  cursor: not-allowed;
+  border-color: rgba(255, 255, 255, 0.12);
+  text-shadow: none;
+  box-shadow: none;
+}
+
+.introBtnGhost {
+  background: rgba(255, 255, 255, 0.03);
+  backdrop-filter: blur(6px);
+}
+
+.introHint {
+  position: absolute;
+  bottom: 30px;
+  font-size: 10px;
+  color: #666;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .introLetter {
+    animation: none;
+    opacity: 1;
+    transform: none;
+    filter: none;
+  }
+}

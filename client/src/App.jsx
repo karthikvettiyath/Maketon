@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { io } from "socket.io-client";
 import { Intel } from "./Intel";
+import LandingIntro from "./LandingIntro";
 import {
   MapContainer,
   Marker,
@@ -552,7 +553,7 @@ function HawkinsProtocol({
   );
 }
 
-export default function App() {
+function AppShell() {
   const [identity, setIdentity] = useIdentity();
   const [connected, setConnected] = useState(false);
   const socketRef = useRef(null);
@@ -2195,4 +2196,34 @@ export default function App() {
       </footer>
     </div>
   );
+}
+
+export default function App() {
+  const [showIntro, setShowIntro] = useState(() => {
+    if (typeof window === "undefined") return false;
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("skipIntro") === "1") return false;
+    if (params.get("intro") === "1") return true;
+    return sessionStorage.getItem("udsn.intro.seen") !== "1";
+  });
+
+  if (showIntro) {
+    return (
+      <LandingIntro
+        title="HIVEMIND"
+        subtitle="Returning to your dashboard…"
+        durationMs={9500}
+        onDone={() => {
+          try {
+            sessionStorage.setItem("udsn.intro.seen", "1");
+          } catch {
+            // ignore
+          }
+          setShowIntro(false);
+        }}
+      />
+    );
+  }
+
+  return <AppShell />;
 }
